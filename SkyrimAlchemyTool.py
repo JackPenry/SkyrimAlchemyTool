@@ -17,6 +17,7 @@ def get_effect_name(data, ingredient_name=""):
             if ingredient["name"] == ingredient_name:
                 for index in range(0, 4):
                     effect_name.append(ingredient["effect"][index])
+                break
     else:
         for effect in data["effect"]:
             effect_name.append(effect["name"])
