@@ -1,12 +1,17 @@
 import json
 from tkinter import *
+from tkinter import messagebox
 import tkinter.ttk as ttk
+from os import path
 
 
 def main():
-    alchemy_data = parse_json_file()
+    alchemy_data = parse_json_file("alchemy")
+    if not path.exists("data/ingredient_data.json"):
+        init_ingredient_data(alchemy_data)
+    ingredient_data = parse_json_file("ingredient")
     root = Tk()
-    app = SkyrimAlchemyTool(root, alchemy_data)
+    app = SkyrimAlchemyTool(root, alchemy_data, ingredient_data)
     root.mainloop()
 
 
@@ -38,22 +43,59 @@ def get_ingredient_name(data, effect_name=""):
     return ingredient_name
 
 
-def parse_json_file():
+def init_ingredient_data(alchemy_data):
+    ingredient_data = {"ingredient": []}
+    for ingredient_name in get_ingredient_name(alchemy_data):
+        effect_list = get_effect_name(alchemy_data, ingredient_name)
+        ingredient_data["ingredient"].append({
+            "name": ingredient_name,
+            "effect": [
+                {
+                    "name": effect_list[0],
+                    "learned": "False"
+                },
+                {
+                    "name": effect_list[1],
+                    "learned": "False"
+                },
+                {
+                    "name": effect_list[2],
+                    "learned": "False"
+                },
+                {
+                    "name": effect_list[3],
+                    "learned": "False"
+                }
+            ],
+            "quantity": 0
+        })
+        write_ingredient_data(ingredient_data)
+
+
+def write_ingredient_data(ingredient_data):
+    with open("data/ingredient_data.json", "w") as outfile:
+        outfile.write(json.dumps(ingredient_data, indent=4))
+
+
+def parse_json_file(file):
     try:
-        with open('data/alchemy_data.json') as json_file:
+        with open("data/{0}_data.json".format(file)) as json_file:
             data = json.load(json_file)
     except FileNotFoundError:
-        print("error: file 'alchemy_data.json' could not be found")
+        root = Tk()
+        root.withdraw()
+        messagebox.showerror("Error", "Could not find {0}_data.json".format(file))
         exit(1)
     return data
 
 
 class SkyrimAlchemyTool:
-    def __init__(self, master, alchemy_data):
+    def __init__(self, master, alchemy_data, ingredient_data):
         self.master = master
         self.master.title("Skyrim Alchemy Tool")
         self.master.resizable(False, False)
         self.alchemy_data = alchemy_data
+        self.ingredient_data = ingredient_data
 
         ttk.Style().configure("TFrame", background="#dcdcdc")
         ttk.Style().configure("TRadiobutton", background="#dcdcdc")
@@ -66,6 +108,24 @@ class SkyrimAlchemyTool:
         self.potion_creation = ttk.Frame(self.notebook)
         # self.notebook.add(self.framePotionCreation, text="Potion Creation Tool")
 
+        self.inventory = ttk.Frame(self.notebook)
+        self.notebook.add(self.inventory, text="Inventory")
+        self.inventory_listbox = Listbox(self.inventory, activestyle="none", height=29, width=25)
+        self.inventory_listbox.place(x=10, y=15)
+        for index, ingredient in enumerate(get_ingredient_name(self.alchemy_data)):
+            self.inventory_listbox.insert(index, ingredient)
+        self.inventory_labelframe = LabelFrame(self.inventory, bg="#dcdcdc", height=300, width=350)
+        self.inventory_listbox.bind("<<ListboxSelect>>", self.on_listbox_selected)
+        self.unlearned_effect_listbox = Listbox(self.inventory_labelframe, activestyle="none", height=4, width=25)
+        self.learned_effect_listbox = Listbox(self.inventory_labelframe, activestyle="none", height=4, width=25)
+        self.unlearned_effect_label = ttk.Label(self.inventory_labelframe, text="Unlearned Effects")
+        self.learned_effect_label = ttk.Label(self.inventory_labelframe, text="Learned Effects")
+        self.status_button = ttk.Button(self.inventory_labelframe, command=self.change_effect_status,
+                                        text="Change Status", width=25)
+        self.quantity_label = ttk.Label(self.inventory_labelframe, text="Quantity:")
+        self.quantity_entry = ttk.Entry(self.inventory_labelframe, justify="center", width=4)
+        self.quantity_entry.bind("<FocusOut>", self.update_quantity)
+
         self.encyclopedia = ttk.Frame(self.notebook)
         self.notebook.add(self.encyclopedia, text="Encyclopedia")
 
@@ -73,21 +133,48 @@ class SkyrimAlchemyTool:
         self.effect_label.place(x=10, y=10)
 
         self.select_effect = ttk.Combobox(self.encyclopedia, height=10, width=25,
-                                          values=get_effect_name(self.alchemy_data), textvariable="effect")
-        self.select_effect.bind("<<ComboboxSelected>>", self.on_combobox_selection)
+                                          values=get_effect_name(self.alchemy_data), state="readonly",
+                                          textvariable="effect")
+        self.select_effect.bind("<<ComboboxSelected>>", self.on_combobox_selected)
         self.select_effect.place(x=60, y=10)
 
         self.ingredient_label = ttk.Label(self.encyclopedia, text="Ingredients:")
         self.ingredient_label.place(x=250, y=10)
 
         self.select_ingredient = ttk.Combobox(self.encyclopedia, height=10, width=25,
-                                              values=get_ingredient_name(self.alchemy_data), textvariable="ingredient")
-        self.select_ingredient.bind("<<ComboboxSelected>>", self.on_combobox_selection)
+                                              values=get_ingredient_name(self.alchemy_data),
+                                              state="readonly", textvariable="ingredient")
+        self.select_ingredient.bind("<<ComboboxSelected>>", self.on_combobox_selected)
         self.select_ingredient.place(x=330, y=10)
 
         self.selected_item = LabelFrame(self.encyclopedia, bg="#dcdcdc", height=400, width=500)
 
         self.button_list = []
+        self.selected_ingredient = {}
+
+    def change_effect_status(self):
+        selection = ""
+        value = ""
+        if self.unlearned_effect_listbox.curselection():
+            index = self.unlearned_effect_listbox.curselection()
+            selection = self.unlearned_effect_listbox.get(index)
+            self.learned_effect_listbox.insert(END, selection)
+            self.unlearned_effect_listbox.delete(index)
+            value = "True"
+        elif self.learned_effect_listbox.curselection():
+            index = self.learned_effect_listbox.curselection()
+            selection = self.learned_effect_listbox.get(index)
+            self.unlearned_effect_listbox.insert(END, selection)
+            self.learned_effect_listbox.delete(index)
+            value = "False"
+        else:
+            messagebox.showerror("Error", "No effect selected!")
+            return
+        for effect in self.selected_ingredient["effect"]:
+            if effect["name"] == selection:
+                effect["learned"] = value
+                break
+        write_ingredient_data(self.ingredient_data)
 
     def destroy_buttons(self):
         for button in self.button_list:
@@ -143,7 +230,7 @@ class SkyrimAlchemyTool:
 
     def enumerate_button_list(self, group, name):
         self.destroy_buttons()
-
+        item_list = []
         if group == "effect":
             item_list = get_ingredient_name(self.alchemy_data, name)
             group = "ingredient"
@@ -160,13 +247,49 @@ class SkyrimAlchemyTool:
         self.enumerate_button_list(group, button.cget("text"))
         self.display_info(button.cget("text"))
 
-    def on_combobox_selection(self, event):
+    def on_combobox_selected(self, event):
         selected_combobox = event.widget
         selection = selected_combobox.get()
         selected_combobox.set("")
         self.master.focus()
         self.enumerate_button_list(selected_combobox.cget("textvariable"), selection)
         self.display_info(selection)
+
+    def on_listbox_selected(self, event):
+        selected_listbox = event.widget
+        if not selected_listbox.curselection():
+            return
+        selection = selected_listbox.get(selected_listbox.curselection())
+        self.show_inventory_item(selection)
+
+    def show_inventory_item(self, ingredient_name):
+        self.inventory_labelframe.configure(text=ingredient_name)
+        self.inventory_labelframe.place(x=185, y=9)
+        self.unlearned_effect_listbox.place(x=10, y=50)
+        self.learned_effect_listbox.place(x=179, y=50)
+        self.unlearned_effect_label.place(x=39, y=25)
+        self.learned_effect_label.place(x=214, y=25)
+        self.status_button.place(relx=.5, x=-80, y=130)
+        self.unlearned_effect_listbox.delete(0, END)
+        self.learned_effect_listbox.delete(0, END)
+        for ingredient in self.ingredient_data["ingredient"]:
+            if ingredient["name"] == ingredient_name:
+                self.selected_ingredient = ingredient
+                break
+        for index in range(4):
+            if self.selected_ingredient["effect"][index]["learned"] == "False":
+                self.unlearned_effect_listbox.insert(END, ingredient["effect"][index]["name"])
+            else:
+                self.learned_effect_listbox.insert(END, ingredient["effect"][index]["name"])
+        self.quantity_label.place(relx=.5, x=-45, y=180)
+        self.quantity_entry.delete(0, END)
+        self.quantity_entry.insert(0, self.selected_ingredient["quantity"])
+        self.quantity_entry.place(relx=.5, x=15, y=180)
+
+    def update_quantity(self, event):
+        if int(self.quantity_entry.get()) != self.selected_ingredient["quantity"]:
+            self.selected_ingredient["quantity"] = self.quantity_entry.get()
+            write_ingredient_data(self.ingredient_data)
 
 
 main()
